@@ -6,6 +6,8 @@
  * and a positive strafe moves the ball to the right of the screen.
  */
 
+import { shove } from './crowd'
+
 export const GRAVITY = 24
 export const JUMP_V = 8.4
 export const STRAFE_SPEED = 9.5
@@ -32,6 +34,7 @@ export type Status = 'ready' | 'running' | 'dead'
 export type Cause = 'spike' | 'fall'
 export type Kind = 'ball' | 'spike' | 'barrier' | 'block'
 export type EventName = 'jump' | 'merge' | 'hurt' | 'die' | 'win'
+export type Authority = 'solo' | 'host' | 'guest'
 
 export interface Input {
   strafe: number
@@ -78,6 +81,35 @@ export interface Player {
   radius: number
 }
 
+/** A friend on the same road. Poses are filled in by the match, not by step. */
+export interface Remote {
+  id: string
+  x: number
+  y: number
+  z: number
+  vy: number
+  value: number
+  radius: number
+  alive: boolean
+  skin: string
+}
+
+export interface BallTake {
+  id: number
+  valueBefore: number
+}
+
+export interface BallLock {
+  id: number
+  value: number
+}
+
+export interface BallKnock {
+  id: number
+  vx: number
+  vy: number
+}
+
 export interface Sim {
   player: Player
   bodies: Body[]
@@ -102,6 +134,17 @@ export interface Sim {
   nextId: number
   events: EventName[]
   rng: () => number
+  remotes: Remote[]
+  authority: Authority
+  merges: BallTake[]
+  locks: BallLock[]
+  knocks: BallKnock[]
+  /** Ball ids the host already gave away, including ones this client has not spawned yet. */
+  removed: Set<number>
+  /** Optimistic merges kept in the world until the host agrees. */
+  held: Set<number>
+  /** Locks that arrived before this client generated the ball. */
+  pendingLocks: Map<number, number>
 }
 
 export function radiusFor(value: number): number {
@@ -147,6 +190,14 @@ function base(seed: number, procedural: boolean, bestValue = 0, bestDistance = 0
     nextId: 1,
     events: [],
     rng: mulberry32(seed),
+    remotes: [],
+    authority: 'solo',
+    merges: [],
+    locks: [],
+    knocks: [],
+    removed: new Set(),
+    held: new Set(),
+    pendingLocks: new Map(),
   }
 }
 
@@ -180,6 +231,9 @@ export function restart(sim: Sim, seed: number, jumpHeld: boolean): Sim {
 export function step(sim: Sim, input: Input, dt: number) {
   if (sim.status !== 'running') return
   sim.events.length = 0
+  sim.merges.length = 0
+  sim.locks.length = 0
+  sim.knocks.length = 0
   const edge = input.jump && !sim.jumpHeld
   sim.jumpHeld = input.jump
   let left = Math.min(Math.max(dt, 0), 0.05)
@@ -225,6 +279,7 @@ function stepOnce(sim: Sim, input: Input, dt: number, jumpEdge: boolean) {
   const wasSupported = p.grounded
   snapFloor(sim)
   resolveSolids(sim)
+  shoveRemotes(sim)
   if (p.grounded) sim.coyote = COYOTE
   else if (wasSupported) sim.coyote = COYOTE
   else sim.coyote = Math.max(0, sim.coyote - dt)
@@ -240,7 +295,7 @@ function stepOnce(sim: Sim, input: Input, dt: number, jumpEdge: boolean) {
   resolveSolids(sim)
   integrateFlying(sim, dt)
   cleanup(sim)
-  if (sim.procedural) extend(sim, p.z - AHEAD)
+  if (sim.procedural) extend(sim, leadZ(sim) - AHEAD)
 
   if (sim.distance > sim.bestDistance) sim.bestDistance = sim.distance
 }
@@ -358,21 +413,29 @@ function mergeBalls(sim: Sim) {
   const p = sim.player
   for (const body of sim.bodies) {
     if (body.kind !== 'ball' || !body.alive || body.flying) continue
-    if (body.pending) lockBall(sim, body)
+    if (body.pending) {
+      if (sim.authority === 'guest') continue
+      lockBall(sim, body, sim.player.value)
+    }
     const dx = p.x - body.x
     const dy = p.y - body.y
     const dz = p.z - body.z
     const reach = p.radius + body.radius
     if (dx * dx + dy * dy + dz * dz > reach * reach) continue
     if (body.value === p.value) {
+      const valueBefore = p.value
       body.alive = false
+      sim.removed.add(body.id)
+      if (sim.authority === 'guest') sim.held.add(body.id)
       applyValue(sim, p.value * 2)
+      sim.merges.push({ id: body.id, valueBefore })
       sim.pop = 1
       sim.events.push('merge')
     } else {
       body.flying = true
       body.vx = (Math.sign(body.x - p.x) || 1) * 7
       body.vy = 7
+      sim.knocks.push({ id: body.id, vx: body.vx, vy: body.vy })
     }
   }
 }
@@ -388,25 +451,88 @@ function integrateFlying(sim: Sim, dt: number) {
 }
 
 function cleanup(sim: Sim) {
-  const limit = sim.player.z + BEHIND
-  sim.bodies = sim.bodies.filter((body) => body.alive && body.z <= limit)
+  const limit = trailZ(sim) + BEHIND
+  sim.bodies = sim.bodies.filter((body) => (body.alive || sim.held.has(body.id)) && body.z <= limit)
   sim.floors = sim.floors.filter((floor) => floor.z0 <= limit)
 }
 
-function lockApproaching(sim: Sim) {
-  for (const body of sim.bodies) {
-    if (body.kind !== 'ball' || !body.pending || !body.alive) continue
-    const ahead = sim.player.z - body.z
-    if (ahead > 0 && ahead <= LOCK_DISTANCE) lockBall(sim, body)
+/** Keep generating while a friend is ahead, and keep balls a friend behind still needs. */
+export function catchUp(sim: Sim) {
+  if (sim.procedural) extend(sim, leadZ(sim) - AHEAD)
+}
+
+function leadZ(sim: Sim): number {
+  let z = sim.player.z
+  for (const remote of sim.remotes) if (remote.alive) z = Math.min(z, remote.z)
+  return z
+}
+
+function trailZ(sim: Sim): number {
+  let z = sim.player.z
+  for (const remote of sim.remotes) if (remote.alive) z = Math.max(z, remote.z)
+  return z
+}
+
+function shoveRemotes(sim: Sim) {
+  if (sim.remotes.length === 0) return
+  const player = sim.player
+  for (const remote of sim.remotes) {
+    if (!remote.alive) continue
+    const delta = shove(player, remote)
+    player.x += delta.x
+    player.y += delta.y
+    player.z += delta.z
   }
 }
 
-function lockBall(sim: Sim, body: Body) {
-  const current = sim.player.value
+function lockApproaching(sim: Sim) {
+  if (sim.authority === 'guest') return
+  for (const body of sim.bodies) {
+    if (body.kind !== 'ball' || !body.pending || !body.alive) continue
+    const current = nearestValue(sim, body)
+    if (current === null) continue
+    lockBall(sim, body, current)
+  }
+}
+
+/** Same 60 / 20 / 20 split as a solo lock, from an explicit tier. */
+export function valueNear(current: number, pick: number): number {
+  if (pick >= 8) return Math.min(4096, current * 2)
+  if (pick >= 6) return Math.max(2, current / 2)
+  return current
+}
+
+function nearestValue(sim: Sim, body: Body): number | null {
+  let bestValue = 0
+  let bestDist = Infinity
+  let found = false
+  const consider = (x: number, z: number, value: number) => {
+    const ahead = z - body.z
+    if (ahead <= 0 || ahead > LOCK_DISTANCE) return
+    const dist = Math.hypot(x - body.x, ahead)
+    if (dist < bestDist) {
+      bestDist = dist
+      bestValue = value
+      found = true
+    }
+  }
+  consider(sim.player.x, sim.player.z, sim.player.value)
+  if (sim.authority === 'host') {
+    for (const remote of sim.remotes) {
+      if (!remote.alive) continue
+      consider(remote.x, remote.z, remote.value)
+    }
+  }
+  return found ? bestValue : null
+}
+
+function lockBall(sim: Sim, body: Body, current: number) {
   const pick = Math.abs((body.id * 17) ^ current) % 10
-  let value = current
-  if (pick >= 8) value = Math.min(4096, current * 2)
-  else if (pick >= 6) value = Math.max(2, current / 2)
+  assignBallValue(body, valueNear(current, pick))
+  sim.locks.push({ id: body.id, value: body.value })
+}
+
+function assignBallValue(body: Body, value: number) {
   body.value = value
   body.radius = radiusFor(value)
   body.y = body.radius
@@ -414,6 +540,35 @@ function lockBall(sim: Sim, body: Body) {
   body.hy = body.radius
   body.hz = body.radius
   body.pending = false
+}
+
+export function applyLock(sim: Sim, id: number, value: number) {
+  const body = sim.bodies.find((item) => item.id === id && item.kind === 'ball')
+  if (!body || !body.alive || body.flying) {
+    if (!sim.removed.has(id)) sim.pendingLocks.set(id, value)
+    return
+  }
+  assignBallValue(body, value)
+  sim.pendingLocks.delete(id)
+}
+
+export function removeBall(sim: Sim, id: number) {
+  sim.removed.add(id)
+  sim.pendingLocks.delete(id)
+  const body = sim.bodies.find((item) => item.id === id)
+  if (body) body.alive = false
+}
+
+export function applyFly(sim: Sim, id: number, vx: number, vy: number) {
+  const body = sim.bodies.find((item) => item.id === id && item.kind === 'ball')
+  if (!body || !body.alive || body.flying) return
+  body.flying = true
+  body.vx = vx
+  body.vy = vy
+}
+
+export function setPlayerValue(sim: Sim, value: number) {
+  applyValue(sim, value)
 }
 
 export function extend(sim: Sim, zAhead: number) {
@@ -509,7 +664,9 @@ function addProcedural(sim: Sim, z0: number, z1: number, dist: number) {
 function tryBall(sim: Sim, x: number, z: number) {
   const radius = radiusFor(2)
   if (!clearSpot(sim, x, z, radius)) return
+  const reserved = sim.pendingLocks.has(sim.nextId) || sim.removed.has(sim.nextId)
   const body = spawnBall(sim, x, z, 2)
+  if (reserved) return
   body.pending = true
   body.value = 0
 }
@@ -547,8 +704,18 @@ export function spawnBall(sim: Sim, x: number, z: number, value: number): Body {
     vx: 0,
     vy: 0,
   }
+  noteSpawn(sim, body)
   sim.bodies.push(body)
   return body
+}
+
+function noteSpawn(sim: Sim, body: Body) {
+  const locked = sim.pendingLocks.get(body.id)
+  if (locked !== undefined) {
+    assignBallValue(body, locked)
+    sim.pendingLocks.delete(body.id)
+  }
+  if (sim.removed.has(body.id)) body.alive = false
 }
 
 export function spawnHazard(

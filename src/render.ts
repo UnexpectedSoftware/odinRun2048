@@ -1,6 +1,8 @@
 import * as THREE from 'three'
+import { createAvatar, disposeAvatar, tintAvatar } from './avatar'
 import { styleFor } from './palette'
-import type { Body, Floor, Sim } from './sim'
+import { isSkinId, paintFace, paintFootball, skinById, type SkinId } from './skins'
+import type { Body, Floor, Remote, Sim } from './sim'
 
 /**
  * Follow camera sits on +z and looks toward −z. Screen-right is world +x.
@@ -47,7 +49,11 @@ export class View {
   private readonly deckB: THREE.MeshStandardMaterial
   private readonly railL: THREE.MeshStandardMaterial
   private readonly railR: THREE.MeshStandardMaterial
-  private readonly player: THREE.Mesh
+  private player!: THREE.Group
+  private skin: SkinId = 'visor'
+  private readonly textures = new Map<SkinId, THREE.CanvasTexture>()
+  private readonly remotes = new Map<string, { skin: SkinId; group: THREE.Group }>()
+  private readonly remoteLabels = new Map<string, HTMLDivElement>()
   private readonly proj = new THREE.Vector3()
   private roll = 0
   private lastDistance = 0
@@ -78,10 +84,20 @@ export class View {
     this.railL = this.lit(RAIL_LEFT, 0.85)
     this.railR = this.lit(RAIL_RIGHT, 0.85)
 
-    this.player = new THREE.Mesh(this.sphere, this.ballMaterial('#eee4da'))
-    this.scene.add(this.player)
+    this.setSkin('visor')
     this.scene.add(this.stars())
     this.resize()
+  }
+
+  setSkin(id: SkinId) {
+    if (this.player && this.skin === id) return
+    if (this.player) {
+      this.scene.remove(this.player)
+      disposeAvatar(this.player)
+    }
+    this.skin = id
+    this.player = createAvatar(id, this.textureFor(id))
+    this.scene.add(this.player)
   }
 
   resize() {
@@ -105,26 +121,41 @@ export class View {
     this.floors.clear()
     for (const node of this.labelNodes.values()) node.remove()
     this.labelNodes.clear()
+    for (const entry of this.remotes.values()) {
+      this.scene.remove(entry.group)
+      disposeAvatar(entry.group)
+    }
+    this.remotes.clear()
+    for (const node of this.remoteLabels.values()) node.remove()
+    this.remoteLabels.clear()
     this.roll = 0
     this.lastDistance = 0
   }
 
-  sync(sim: Sim) {
+  sync(sim: Sim, focus: { x: number; y: number; z: number } = sim.player) {
     const p = sim.player
     this.syncFloors(sim.floors)
     this.syncBodies(sim.bodies)
+    this.syncRemotes(sim.remotes)
     const traveled = sim.distance - this.lastDistance
     if (traveled > 0) this.roll += traveled / Math.max(0.25, p.radius)
     this.lastDistance = sim.distance
     const punch = 1 + sim.pop * 0.28
     this.player.scale.setScalar(p.radius * punch)
     this.player.position.set(p.x, p.y, p.z)
-    this.player.rotation.x = this.roll
+    this.rollShell(this.player, this.skin, this.roll)
+    tintAvatar(this.player, this.skin, sim.invuln > 0)
     const style = styleFor(p.value)
-    const tint = sim.invuln > 0 ? '#ff8aa0' : style.fill
-    this.player.material = this.ballMaterial(tint)
-    placeCamera(this.camera, p)
-    this.placeLabel(this.labelFor('player'), p.value < 2 ? '?' : String(p.value), style, p.x, p.y, p.z, 22 + p.radius * 28)
+    placeCamera(this.camera, focus)
+    this.placeLabel(
+      this.labelFor('player'),
+      p.value < 2 ? '?' : String(p.value),
+      style,
+      p.x,
+      p.y + p.radius * 1.15,
+      p.z,
+      22 + p.radius * 28,
+    )
     this.renderer.render(this.scene, this.camera)
   }
 
@@ -275,6 +306,87 @@ export class View {
     const sx = (this.proj.x * 0.5 + 0.5) * this.width
     const sy = (-this.proj.y * 0.5 + 0.5) * this.height
     node.style.transform = `translate(${sx}px, ${sy}px) translate(-50%, -50%)`
+  }
+
+  private syncRemotes(remotes: Remote[]) {
+    const seen = new Set<string>()
+    for (const remote of remotes) {
+      if (!remote.alive || !isSkinId(remote.skin)) continue
+      seen.add(remote.id)
+      let entry = this.remotes.get(remote.id)
+      if (!entry || entry.skin !== remote.skin) {
+        if (entry) {
+          this.scene.remove(entry.group)
+          disposeAvatar(entry.group)
+        }
+        entry = { skin: remote.skin, group: createAvatar(remote.skin, this.textureFor(remote.skin)) }
+        this.remotes.set(remote.id, entry)
+        this.scene.add(entry.group)
+      }
+      entry.group.position.set(remote.x, remote.y, remote.z)
+      entry.group.scale.setScalar(Math.max(0.2, remote.radius))
+      const shell = entry.group.getObjectByName('shell') as THREE.Mesh | undefined
+      if (shell && skinById(remote.skin).rolls) shell.rotation.x = -remote.z / Math.max(0.25, remote.radius)
+      const style = styleFor(remote.value)
+      this.placeLabel(
+        this.remoteLabel(remote.id),
+        String(remote.value),
+        style,
+        remote.x,
+        remote.y + remote.radius * 1.15,
+        remote.z,
+        22 + remote.radius * 28,
+      )
+    }
+    for (const [id, entry] of this.remotes) {
+      if (seen.has(id)) continue
+      this.scene.remove(entry.group)
+      disposeAvatar(entry.group)
+      this.remotes.delete(id)
+      const label = this.remoteLabels.get(id)
+      if (label) {
+        label.remove()
+        this.remoteLabels.delete(id)
+      }
+    }
+  }
+
+  private remoteLabel(id: string): HTMLDivElement {
+    let node = this.remoteLabels.get(id)
+    if (!node) {
+      node = document.createElement('div')
+      node.className = 'ball-label'
+      node.dataset.role = 'remote'
+      this.labels.append(node)
+      this.remoteLabels.set(id, node)
+    }
+    return node
+  }
+
+  private rollShell(group: THREE.Group, skin: SkinId, roll: number) {
+    const shell = group.getObjectByName('shell') as THREE.Mesh | undefined
+    if (!shell) return
+    shell.rotation.x = skinById(skin).rolls ? roll : 0
+  }
+
+  private textureFor(id: SkinId): THREE.CanvasTexture {
+    let texture = this.textures.get(id)
+    if (texture) return texture
+    const canvas = document.createElement('canvas')
+    if (id === 'football') {
+      canvas.width = 512
+      canvas.height = 256
+      paintFootball(canvas)
+    } else {
+      canvas.width = 256
+      canvas.height = 256
+      paintFace(canvas, id)
+    }
+    texture = new THREE.CanvasTexture(canvas)
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.anisotropy = 4
+    this.textures.set(id, texture)
+    return texture
   }
 
   private ballMaterial(fill: string) {

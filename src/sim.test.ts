@@ -13,6 +13,7 @@ import {
   start,
   step,
   type Input,
+  type Remote,
   type Sim,
 } from './sim'
 
@@ -211,6 +212,83 @@ describe('merge and hazards', () => {
     const locked = sim.bodies.find((body) => body.id === pending!.id)
     expect(locked?.pending).toBe(false)
     expect([16, 32, 64]).toContain(locked?.value)
+  })
+})
+
+function friend(over: Partial<Remote> = {}): Remote {
+  return {
+    id: 'friend',
+    x: 0,
+    y: 0.4,
+    z: 0,
+    vy: 0,
+    value: 2,
+    radius: 0.4,
+    alive: true,
+    skin: 'visor',
+    ...over,
+  }
+}
+
+describe('friends', () => {
+  it('shoves the player aside when a bigger friend overlaps', () => {
+    const sim = createArena()
+    start(sim)
+    sim.remotes = [friend({ x: 0.55, y: sim.player.radius, radius: 1.1, value: 64 })]
+    step(sim, IDLE, 1 / 60)
+    expect(sim.player.x).toBeLessThan(-0.15)
+  })
+
+  it('locks a pending ball to the closer friend on the host', () => {
+    const sim = createSim(1)
+    sim.authority = 'host'
+    start(sim)
+    const pending = sim.bodies.find((body) => body.kind === 'ball' && body.pending)
+    expect(pending).toBeTruthy()
+    sim.player.z = pending!.z + 30
+    sim.remotes = [friend({ x: pending!.x, z: pending!.z + 8, value: 16, radius: radiusFor(16) })]
+    step(sim, IDLE, 1 / 60)
+    const locked = sim.bodies.find((body) => body.id === pending!.id)
+    expect(locked?.pending).toBe(false)
+    expect([8, 16, 32]).toContain(locked?.value)
+  })
+
+  it('does not lock balls on a guest', () => {
+    const sim = createSim(1)
+    sim.authority = 'guest'
+    start(sim)
+    const pending = sim.bodies.find((body) => body.kind === 'ball' && body.pending)
+    expect(pending).toBeTruthy()
+    sim.player.z = pending!.z + LOCK_DISTANCE - 1
+    sim.player.value = 32
+    step(sim, IDLE, 1 / 60)
+    expect(sim.bodies.find((body) => body.id === pending!.id)?.pending).toBe(true)
+  })
+
+  it('keeps a ball a trailing friend has not passed', () => {
+    const sim = createArena()
+    start(sim)
+    sim.player.z = -50
+    const kept = spawnBall(sim, 0, -10, 2)
+    sim.remotes = [friend({ z: -5 })]
+    step(sim, IDLE, 1 / 60)
+    expect(sim.bodies.some((body) => body.id === kept.id)).toBe(true)
+
+    const alone = createArena()
+    start(alone)
+    alone.player.z = -50
+    const dropped = spawnBall(alone, 0, -10, 2)
+    step(alone, IDLE, 1 / 60)
+    expect(alone.bodies.some((body) => body.id === dropped.id)).toBe(false)
+  })
+
+  it('builds road ahead of a faster friend', () => {
+    const sim = createSim(3)
+    start(sim)
+    const before = sim.generatedTo
+    sim.remotes = [friend({ z: sim.player.z - 80 })]
+    step(sim, IDLE, 1 / 60)
+    expect(sim.generatedTo).toBeLessThan(before - 70)
   })
 })
 

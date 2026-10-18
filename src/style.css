@@ -18,7 +18,7 @@ html, body, #app {
 
 #app { position: relative; touch-action: none; }
 
-canvas {
+#app > canvas {
   position: absolute;
   inset: 0;
   display: block;
@@ -108,10 +108,11 @@ canvas {
   pointer-events: auto;
 }
 
-#overlay[hidden], #banner[hidden], #hint[hidden] { display: none; }
+/* Author display rules would otherwise beat the hidden attribute. */
+#app [hidden] { display: none; }
 
 .card {
-  width: min(440px, calc(100% - 32px));
+  width: min(480px, calc(100% - 32px));
   padding: 28px 26px 22px;
   border-radius: 18px;
   background: rgba(18, 10, 28, 0.92);
@@ -151,3 +152,117 @@ canvas {
   color: var(--cyan);
   font-size: 14px;
 }
+
+#menu, #room-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+#menu button, #room-actions button { margin-top: 12px; }
+
+.card button.ghost {
+  background: transparent;
+  color: var(--cyan);
+  border: 2px solid var(--cyan);
+}
+
+.card button.ghost:hover { background: var(--cyan); color: #140818; }
+
+.card button:disabled { opacity: 0.45; cursor: default; }
+
+.card button:disabled:hover { background: var(--magenta); color: white; }
+
+.card button.ghost:disabled:hover {
+  background: transparent;
+  color: var(--cyan);
+}
+
+#skin-label { margin-bottom: 0; }
+
+.skins {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin: 8px 0 2px;
+}
+
+.card .skins button {
+  width: 68px;
+  height: 68px;
+  margin: 0;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: #140818;
+  overflow: hidden;
+  box-shadow: none;
+}
+
+.card .skins button[aria-pressed="true"] {
+  border-color: var(--cyan);
+  box-shadow: 0 0 12px rgba(0, 229, 255, 0.6);
+}
+
+.card .skins button:hover { background: #140818; color: white; }
+
+.skins canvas {
+  position: static;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+  inset: auto;
+}
+
+#countdown {
+  margin: 4px 0 8px;
+  font-size: 84px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--gold);
+}
+
+#room-code {
+  margin: 8px 0 0;
+  font-size: 32px;
+  letter-spacing: 0.22em;
+  font-weight: 800;
+  color: var(--gold);
+}
+
+#join-form {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+  margin-top: 8px;
+}
+
+#code-input {
+  width: 7.2em;
+  border: 2px solid var(--cyan);
+  background: #100816;
+  color: white;
+  border-radius: 999px;
+  padding: 10px 12px;
+  font: inherit;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+#join-form button { margin-top: 0; }
+
+#roster { margin: 10px auto 0; max-width: 280px; }
+
+#roster p {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 4px 0;
+}
+
+#room-note { min-height: 1.2em; color: #ffd0dc; }

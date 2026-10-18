@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
+import { FACE_LOCAL_Z, createAvatar } from './avatar'
 import { readControls } from './input'
 import { placeCamera } from './render'
 import { IDLE, createArena, start, step, type Input } from './sim'
@@ -48,6 +49,18 @@ describe('keyboard frame', () => {
       expect(right.x).toBeGreaterThan(0.95)
       expect(Math.abs(right.z)).toBeLessThan(0.15)
     }
+  })
+
+  it('puts a robot face on +z, the side that camera is looking from', () => {
+    const avatar = createAvatar('visor')
+    avatar.updateWorldMatrix(true, true)
+    const face = avatar.getObjectByName('face') as THREE.Object3D
+    const pos = new THREE.Vector3()
+    face.getWorldPosition(pos)
+    expect(pos.z).toBeCloseTo(FACE_LOCAL_Z)
+    const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(face.getWorldQuaternion(new THREE.Quaternion()))
+    expect(normal.z).toBeGreaterThan(0.9)
+    expect(createAvatar('football').getObjectByName('face')).toBeUndefined()
   })
 
   it('moves the ball along that same right axis, and W jumps instead of walking', () => {
