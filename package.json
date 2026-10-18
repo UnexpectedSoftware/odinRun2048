@@ -12,7 +12,8 @@
   },
   "license": "Apache-2.0",
   "dependencies": {
-    "three": "^0.186.1"
+    "three": "^0.186.1",
+    "trystero": "^0.26.0"
   },
   "devDependencies": {
     "@types/three": "^0.186.0",

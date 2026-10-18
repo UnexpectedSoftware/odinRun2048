@@ -20,6 +20,14 @@ This is an original game inspired by the merge-runner genre. It does not use art
 
 Matching numbers merge and double. A different number is knocked aside. Spikes and low barriers drop you one tier. A hit at 2, or leaving the track, ends the run. Reaching 2048 shows a banner and the run continues. The best number and distance stay in `localStorage`.
 
+Pick a ball before the run. Visor, Scout, and Fang are original robot faces. Football is a black-and-white panel ball. The choice is saved in `localStorage`. The number stays above the ball.
+
+## Multiplayer
+
+One player opens Multiplayer and creates a room. The five-character code is the room. A friend joins with that code, on the same site, and the host starts the run. Up to four people share the road. A bigger ball shoves a smaller one harder. If you fall, your friends keep going. Spectate follows them, and the host can start the room again.
+
+Rooms are matched through public Nostr relays, then the browsers talk directly. Solo play does not use the network. If a room will not connect, check that both browsers are online and try a new code.
+
 ## Develop
 
 ```bash

@@ -28,7 +28,33 @@
         <p id="blurb">Merge matching balls, jump the spikes, and reach 2048.</p>
         <p id="controls">Arrows or A/D steer. Space, W, or Up jumps. S or Down fast-falls. On a phone, drag to steer and tap to jump.</p>
         <p id="best-line"></p>
-        <button id="play" type="button">Play</button>
+        <div id="skin-row">
+          <p id="skin-label">Your ball</p>
+          <div id="skins" class="skins"></div>
+        </div>
+        <p id="countdown" hidden>3</p>
+        <div id="menu">
+          <button id="play" type="button">Play</button>
+          <button id="multiplayer" type="button" class="ghost">Multiplayer</button>
+        </div>
+        <div id="room" hidden>
+          <p id="room-blurb">Create a room and share the code, or join a friend.</p>
+          <p id="room-code" hidden></p>
+          <button id="copy-code" type="button" class="ghost" hidden>Copy code</button>
+          <form id="join-form">
+            <input id="code-input" maxlength="5" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="CODE" aria-label="Room code">
+            <button id="join-room" type="submit">Join</button>
+          </form>
+          <div id="roster"></div>
+          <p id="room-note"></p>
+          <div id="room-actions">
+            <button id="create-room" type="button">Create room</button>
+            <button id="start-game" type="button" hidden>Start game</button>
+            <button id="spectate" type="button" hidden>Spectate</button>
+            <button id="rematch" type="button" hidden>Run again</button>
+            <button id="leave-room" type="button" class="ghost">Back</button>
+          </div>
+        </div>
         <div><a class="home" href="https://unexpectedsoftware.com/">Unexpected Software</a></div>
       </div>
     </div>
