@@ -8,6 +8,13 @@
 
 import { shove } from './crowd'
 
+/**
+ * Forward motion is a shared function of race time, so two browsers on one
+ * road stay on the same z. Integrating each display's frame clock does not:
+ * a late start or a dropped frame leaves one ball behind, and because speed
+ * grows with distance that gap keeps opening until the balls never meet.
+ */
+
 export const GRAVITY = 24
 export const JUMP_V = 8.4
 export const STRAFE_SPEED = 9.5
@@ -153,6 +160,80 @@ export function radiusFor(value: number): number {
   return 0.4 + (tier - 1) * 0.055
 }
 
+/** Seconds of race time until the cruise hits SPEED_MAX. */
+function cruiseCapTime(): number {
+  return Math.log(SPEED_MAX / SPEED0) / SPEED_GAIN
+}
+
+/** World z after `time` seconds of free running, starting from z = 0. */
+export function cruiseZ(time: number): number {
+  if (time <= 0) return 0
+  const cap = cruiseCapTime()
+  if (time >= cap) {
+    const zCap = (SPEED0 - SPEED_MAX) / SPEED_GAIN
+    return zCap - SPEED_MAX * (time - cap)
+  }
+  return (SPEED0 / SPEED_GAIN) * (1 - Math.exp(SPEED_GAIN * time))
+}
+
+/** Forward speed (positive) at a race time. dz/dt = -cruiseSpeed(time). */
+export function cruiseSpeed(time: number): number {
+  if (time <= 0) return SPEED0
+  if (time >= cruiseCapTime()) return SPEED_MAX
+  return SPEED0 * Math.exp(SPEED_GAIN * time)
+}
+
+/**
+ * Where a friend sits on our road.
+ * `friendWorldZ` was measured on their clock. Subtract their cruise and add
+ * ours, so a late packet or a late start does not park them on another z.
+ * A block or a shove remains as the difference from their cruise.
+ */
+export function roadZ(localTime: number, friendTime: number, friendWorldZ: number): number {
+  return cruiseZ(localTime) + (friendWorldZ - cruiseZ(friendTime))
+}
+
+export interface FriendPlace {
+  time: number
+  z: number
+  alive: boolean
+}
+
+/**
+ * Draw and shove a friend on our road while we are racing.
+ * A fallen friend keeps the z of the first time we saw them down, so the
+ * body does not ride forward with us. Spectating uses the z they sent.
+ */
+export function presentFriend(
+  localTime: number,
+  racing: boolean,
+  friend: FriendPlace,
+  heldZ: number | undefined,
+): { z: number; heldZ: number | undefined } {
+  if (!racing) return { z: friend.z, heldZ: undefined }
+  if (!friend.alive) {
+    const z = heldZ ?? roadZ(localTime, friend.time, friend.z)
+    return { z, heldZ: z }
+  }
+  return { z: roadZ(localTime, friend.time, friend.z), heldZ: undefined }
+}
+
+/**
+ * Move a guest's race clock toward the host's, forward only.
+ * The host packet is already late, so rewinding would rubber-band the ball.
+ */
+export function catchRaceClock(sim: Sim, hostTime: number, dt: number) {
+  if (sim.status !== 'running') return
+  const error = hostTime - sim.time
+  if (error <= 0.02) return
+  const rate = error > 0.75 ? 0.45 : 0.2
+  const correction = Math.min(rate * dt, error)
+  const slip = sim.player.z - cruiseZ(sim.time)
+  sim.time += correction
+  sim.player.z = cruiseZ(sim.time) + slip
+  sim.distance = Math.max(sim.distance, Math.max(0, -sim.player.z))
+}
+
 export function mulberry32(seed: number): () => number {
   let a = seed >>> 0
   return () => {
@@ -248,6 +329,7 @@ export function step(sim: Sim, input: Input, dt: number) {
 
 function stepOnce(sim: Sim, input: Input, dt: number, jumpEdge: boolean) {
   const p = sim.player
+  const slip = p.z - cruiseZ(sim.time)
   sim.time += dt
   if (sim.invuln > 0) sim.invuln -= dt
   if (sim.pop > 0) sim.pop = Math.max(0, sim.pop - dt * 2.5)
@@ -272,8 +354,8 @@ function stepOnce(sim: Sim, input: Input, dt: number, jumpEdge: boolean) {
   p.vy -= gravity * dt
   p.y += p.vy * dt
 
-  sim.speed = Math.min(SPEED_MAX, SPEED0 + Math.max(0, -p.z) * SPEED_GAIN)
-  p.z -= sim.speed * dt
+  sim.speed = cruiseSpeed(sim.time)
+  p.z = cruiseZ(sim.time) + slip
   sim.distance = Math.max(0, -p.z)
 
   const wasSupported = p.grounded

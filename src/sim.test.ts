@@ -2,11 +2,17 @@ import { describe, expect, it } from 'vitest'
 import {
   IDLE,
   LOCK_DISTANCE,
+  SPEED0,
+  catchRaceClock,
   createArena,
   createSim,
+  cruiseSpeed,
+  cruiseZ,
   extend,
   gapLengths,
+  presentFriend,
   radiusFor,
+  roadZ,
   spawnBall,
   spawnBlock,
   spawnHazard,
@@ -26,6 +32,77 @@ function run(sim: Sim, input: Input, seconds: number, dt = 1 / 60) {
   const steps = Math.round(seconds / dt)
   for (let i = 0; i < steps; i++) step(sim, input, dt)
 }
+
+describe('shared pace', () => {
+  it('rolls the same distance at 20Hz and 120Hz', () => {
+    expect(cruiseZ(0)).toBe(0)
+    expect(cruiseSpeed(0)).toBeCloseTo(SPEED0)
+    const dt = 1 / 1000
+    for (const t of [0, 1, 10, 30, 50, 80]) {
+      const numeric = (cruiseZ(t + dt) - cruiseZ(t)) / dt
+      expect(numeric).toBeCloseTo(-cruiseSpeed(t), 1)
+    }
+    const slow = createArena()
+    const fast = createArena()
+    start(slow)
+    start(fast)
+    run(slow, IDLE, 4, 1 / 20)
+    run(fast, IDLE, 4, 1 / 120)
+    expect(slow.player.z).toBeCloseTo(cruiseZ(4), 4)
+    expect(fast.player.z).toBeCloseTo(slow.player.z, 4)
+  })
+
+  it('puts a friend who is seconds ahead on their clock onto our z', () => {
+    const localTime = 3
+    const friendTime = 7
+    const worldZ = cruiseZ(friendTime)
+    expect(worldZ).toBeLessThan(cruiseZ(localTime) - 20)
+    expect(roadZ(localTime, friendTime, worldZ)).toBeCloseTo(cruiseZ(localTime), 4)
+    expect(roadZ(localTime, friendTime, worldZ + 2)).toBeCloseTo(cruiseZ(localTime) + 2, 4)
+  })
+
+  it('meets that friend, so the balls can shove', () => {
+    const sim = createArena()
+    start(sim)
+    run(sim, IDLE, 0.75)
+    const friendTime = sim.time + 4
+    const worldZ = cruiseZ(friendTime)
+    expect(Math.abs(worldZ - sim.player.z)).toBeGreaterThan(20)
+    const z = roadZ(sim.time, friendTime, worldZ)
+    expect(z).toBeCloseTo(sim.player.z, 4)
+    sim.remotes = [friend({ x: 0.45, y: sim.player.y, z, radius: sim.player.radius })]
+    const x = sim.player.x
+    step(sim, IDLE, 1 / 60)
+    expect(Math.abs(sim.player.x - x)).toBeGreaterThan(0.02)
+  })
+
+  it('keeps a fallen friend where they fell, and a spectator on the sent z', () => {
+    const fallen = { time: 5, z: cruiseZ(5) - 1.5, alive: false }
+    const first = presentFriend(5, true, fallen, undefined)
+    expect(first.z).toBeCloseTo(cruiseZ(5) - 1.5, 4)
+    const later = presentFriend(8, true, fallen, first.heldZ)
+    expect(later.z).toBeCloseTo(first.z, 5)
+    const live = presentFriend(2, true, { time: 6, z: cruiseZ(6), alive: true }, 4)
+    expect(live.z).toBeCloseTo(cruiseZ(2), 4)
+    expect(live.heldZ).toBeUndefined()
+    expect(presentFriend(8, false, { time: 9, z: -40, alive: true }, undefined).z).toBe(-40)
+  })
+
+  it('catches a late guest up toward the host clock and does not rewind', () => {
+    const sim = createArena()
+    start(sim)
+    run(sim, IDLE, 1)
+    const behind = sim.time
+    const z = sim.player.z
+    catchRaceClock(sim, behind - 1, 1)
+    expect(sim.time).toBeCloseTo(behind)
+    expect(sim.player.z).toBeCloseTo(z)
+    catchRaceClock(sim, behind + 1, 1)
+    expect(sim.time).toBeGreaterThan(behind + 0.1)
+    expect(sim.time).toBeLessThan(behind + 0.5)
+    expect(sim.player.z).toBeLessThan(z)
+  })
+})
 
 describe('radius', () => {
   it('grows with the tier and still fits a narrow bridge', () => {
