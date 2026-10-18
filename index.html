@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Odin Run 2048</title>
+  <meta name="description" content="Steer a numbered ball, jump the spikes, and merge your way to 2048.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='46' fill='%23edc22e'/%3E%3Ctext x='50' y='64' text-anchor='middle' font-size='42' font-family='sans-serif' font-weight='700' fill='%23776e65'%3E2%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./src/style.css">
+</head>
+<body>
+  <div id="app">
+    <div id="labels"></div>
+    <div id="hud">
+      <div id="value" class="stat">2</div>
+      <div id="stats" class="stat"></div>
+      <div id="hint">Arrows or A/D steer · Space, W, or Up jumps · S or Down fast-falls</div>
+    </div>
+    <div id="banner" hidden>
+      <div>
+        <strong>2048</strong>
+        <div><span>Keep going.</span></div>
+      </div>
+    </div>
+    <div id="overlay">
+      <div class="card">
+        <h1 id="title">Odin Run 2048</h1>
+        <p id="blurb">Merge matching balls, jump the spikes, and reach 2048.</p>
+        <p id="controls">Arrows or A/D steer. Space, W, or Up jumps. S or Down fast-falls. On a phone, drag to steer and tap to jump.</p>
+        <p id="best-line"></p>
+        <button id="play" type="button">Play</button>
+        <div><a class="home" href="https://unexpectedsoftware.com/">Unexpected Software</a></div>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="./src/main.ts"></script>
+</body>
+</html>
