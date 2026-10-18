@@ -254,12 +254,16 @@ function asPose(data: unknown): NetPose | null {
   const x = num(data.x)
   const y = num(data.y)
   const z = num(data.z)
+  const time = num(data.time)
   const vy = num(data.vy)
   const value = num(data.value)
   const radius = num(data.radius)
   const seq = num(data.seq)
-  if (x === null || y === null || z === null || vy === null || value === null || radius === null || seq === null) {
+  if (
+    x === null || y === null || z === null || time === null ||
+    vy === null || value === null || radius === null || seq === null
+  ) {
     return null
   }
-  return { x, y, z, vy, value, radius, alive: data.alive, skin: data.skin, seq }
+  return { x, y, z, time, vy, value, radius, alive: data.alive, skin: data.skin, seq }
 }

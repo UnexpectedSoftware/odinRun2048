@@ -79,6 +79,8 @@ export interface NetPose {
   x: number
   y: number
   z: number
+  /** Sender's race clock. World z is only meaningful together with this. */
+  time: number
   vy: number
   value: number
   radius: number
@@ -98,6 +100,7 @@ export function lerpPose(a: NetPose, b: NetPose, u: number): NetPose {
     x: a.x + (b.x - a.x) * t,
     y: a.y + (b.y - a.y) * t,
     z: a.z + (b.z - a.z) * t,
+    time: a.time + (b.time - a.time) * t,
     vy: a.vy + (b.vy - a.vy) * t,
     value: t < 0.5 ? a.value : b.value,
     radius: a.radius + (b.radius - a.radius) * t,

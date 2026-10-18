@@ -14,12 +14,14 @@ import { Net } from './net'
 import { readControls } from './input'
 import { View } from './render'
 import { isSkinId, paintIcon, SKINS, skinById, type SkinId } from './skins'
-import { playEvent } from './sound'
+import { armMusic, keepMusic, musicEnabled, playEvent, toggleMusic } from './sound'
 import {
   applyFly,
   applyLock,
+  catchRaceClock,
   catchUp,
   createSim,
+  presentFriend,
   removeBall,
   restart,
   setPlayerValue,
@@ -67,6 +69,7 @@ const startButton = document.querySelector<HTMLButtonElement>('#start-game')!
 const spectateButton = document.querySelector<HTMLButtonElement>('#spectate')!
 const rematchButton = document.querySelector<HTMLButtonElement>('#rematch')!
 const leaveButton = document.querySelector<HTMLButtonElement>('#leave-room')!
+const musicButton = document.querySelector<HTMLButtonElement>('#music')!
 
 const held = new Set<string>()
 let touchStrafe = 0
@@ -95,6 +98,8 @@ const pendingTakes = new Map<number, { valueBefore: number; at: number }>()
 const peerSkins = new Map<string, SkinId>()
 const remoteSamples = new Map<string, PoseSample[]>()
 const lastSeq = new Map<string, number>()
+/** Fallen friends stay on the z where we first saw them down. */
+const heldFriendZ = new Map<string, number>()
 const inbox: Array<() => void> = []
 
 const saved = loadBest()
@@ -106,17 +111,18 @@ buildSkinButtons()
 window.addEventListener('resize', () => view.resize())
 
 window.addEventListener('keydown', (event) => {
-  if (isControl(event.code)) event.preventDefault()
-  held.add(event.code)
+  armMusic()
+  const target = event.target
+  const onButton = target instanceof HTMLElement && Boolean(target.closest('button, input, a'))
+  if (isControl(event.code) && !onButton) event.preventDefault()
+  if (!onButton) held.add(event.code)
   if (event.code === 'Escape' && spectating) {
     spectating = false
     chrome = 'dead-multi'
     paintChrome()
     return
   }
-  if (overlayEl.hidden) return
-  const target = event.target
-  if (target instanceof HTMLElement && (target.closest('button') || target.closest('input') || target.closest('a'))) return
+  if (overlayEl.hidden || onButton) return
   if ((chrome === 'title' || chrome === 'dead-solo') && (event.code === 'Space' || event.code === 'Enter')) begin()
 })
 
@@ -145,8 +151,13 @@ joinForm.addEventListener('submit', (event) => {
 codeInput.addEventListener('input', () => {
   codeInput.value = codeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5)
 })
+musicButton.addEventListener('click', () => {
+  toggleMusic()
+  paintMusic()
+})
 
 app.addEventListener('pointerdown', (event) => {
+  armMusic()
   if (!overlayEl.hidden) return
   if (event.target !== view.renderer.domElement) return
   pointerId = event.pointerId
@@ -230,6 +241,7 @@ function connect(code: string) {
   peerSkins.clear()
   remoteSamples.clear()
   lastSeq.clear()
+  heldFriendZ.clear()
   try {
     net = new Net(code, {
       skin: () => skin,
@@ -294,6 +306,7 @@ function launchMatch() {
   pendingTakes.clear()
   remoteSamples.clear()
   lastSeq.clear()
+  heldFriendZ.clear()
   bannerEl.hidden = true
   spectating = false
   chrome = 'hidden'
@@ -312,6 +325,7 @@ function backToTitle(message = '') {
   peerSkins.clear()
   remoteSamples.clear()
   lastSeq.clear()
+  heldFriendZ.clear()
   pendingTakes.clear()
   sim = createSim((Date.now() ^ (Math.random() * 1e9)) >>> 0, saved.value, saved.distance)
   view.clear()
@@ -331,6 +345,7 @@ function failRoom(message: string) {
   countdown = 0
   peerSkins.clear()
   remoteSamples.clear()
+  heldFriendZ.clear()
   chrome = 'lobby'
   roomNote.textContent = message
   paintChrome()
@@ -378,6 +393,7 @@ function onLeave(peerId: string) {
   peerSkins.delete(peerId)
   remoteSamples.delete(peerId)
   lastSeq.delete(peerId)
+  heldFriendZ.delete(peerId)
   if (!hosting && peerId === hostId) {
     backToTitle('The host left.')
     return
@@ -463,17 +479,22 @@ function flushNet() {
 function applyRemotePoses(now: number) {
   if (!matchLive) {
     sim.remotes = []
+    heldFriendZ.clear()
     return
   }
+  const racing = sim.status === 'running'
   const remotes = []
   for (const [id, samples] of remoteSamples) {
     const pose = samplePoses(samples, now)
     if (!pose) continue
+    const placed = presentFriend(sim.time, racing, pose, heldFriendZ.get(id))
+    if (placed.heldZ === undefined) heldFriendZ.delete(id)
+    else heldFriendZ.set(id, placed.heldZ)
     remotes.push({
       id,
       x: pose.x,
       y: pose.y,
-      z: pose.z,
+      z: placed.z,
       vy: pose.vy,
       value: pose.value,
       radius: pose.radius,
@@ -482,6 +503,13 @@ function applyRemotePoses(now: number) {
     })
   }
   sim.remotes = remotes
+}
+
+function pullTowardHost(dt: number) {
+  if (hosting || !hostId || sim.status !== 'running') return
+  const latest = remoteSamples.get(hostId)?.at(-1)
+  if (!latest?.pose.alive) return
+  catchRaceClock(sim, latest.pose.time, dt)
 }
 
 function focusPoint() {
@@ -624,6 +652,12 @@ function isControl(code: string) {
   return code === 'Space' || code.startsWith('Arrow') || code === 'KeyW' || code === 'KeyA' || code === 'KeyS' || code === 'KeyD' || code === 'Escape'
 }
 
+function paintMusic() {
+  const on = musicEnabled()
+  musicButton.textContent = on ? 'Music on' : 'Music off'
+  musicButton.setAttribute('aria-pressed', on ? 'true' : 'false')
+}
+
 function paint() {
   const bestValue = sim.bestValue >= 2 ? String(sim.bestValue) : '—'
   valueEl.textContent = String(sim.player.value)
@@ -697,6 +731,7 @@ function frame(nowMs: number) {
     }
   }
 
+  pullTowardHost(dt)
   applyRemotePoses(now)
 
   if (sim.status === 'running' && chrome === 'hidden') {
@@ -728,6 +763,7 @@ function frame(nowMs: number) {
       x: sim.player.x,
       y: sim.player.y,
       z: sim.player.z,
+      time: sim.time,
       vy: sim.player.vy,
       value: sim.player.value,
       radius: sim.player.radius,
@@ -737,6 +773,7 @@ function frame(nowMs: number) {
     })
   }
 
+  keepMusic(now)
   paint()
   view.resize()
   view.sync(sim, focusPoint())
@@ -744,4 +781,5 @@ function frame(nowMs: number) {
 }
 
 showReady()
+paintMusic()
 requestAnimationFrame(frame)

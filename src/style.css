@@ -65,9 +65,36 @@ html, body, #app {
 }
 
 #stats {
+  margin-top: 46px;
   text-align: right;
   font-size: 16px;
   line-height: 1.45;
+}
+
+#music {
+  position: absolute;
+  z-index: 5;
+  top: 16px;
+  right: 16px;
+  background: rgba(18, 10, 28, 0.88);
+  color: var(--cyan);
+  border: 2px solid var(--cyan);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font: inherit;
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+#music[aria-pressed='false'] {
+  color: #b9a8c4;
+  border-color: #6e6478;
+}
+
+#music:hover {
+  background: var(--cyan);
+  color: #140818;
 }
 
 #hint {

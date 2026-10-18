@@ -18,6 +18,7 @@ function pose(over: Partial<NetPose> = {}): NetPose {
     x: 0,
     y: 0.4,
     z: 0,
+    time: 0,
     vy: 0,
     value: 2,
     radius: 0.4,
@@ -90,6 +91,14 @@ describe('pose sampling', () => {
     expect(mid?.x).toBeCloseTo(1.2)
     expect(mid?.value).toBe(4)
     expect(samplePoses(samples, 1.1)?.value).toBe(2)
+  })
+
+  it('interpolates the race clock with the position', () => {
+    const samples = [
+      { t: 1, pose: pose({ time: 4, seq: 1 }) },
+      { t: 1.2, pose: pose({ time: 6, seq: 2 }) },
+    ]
+    expect(samplePoses(samples, 1.2)?.time).toBeCloseTo(5.2)
   })
 
   it('uses the only sample before a second one arrives', () => {
