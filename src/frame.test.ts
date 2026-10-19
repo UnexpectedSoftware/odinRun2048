@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
-import { FACE_LOCAL_Z, createAvatar } from './avatar'
+import { createAvatar } from './avatar'
+import { sphereDir } from './skins'
 import { readControls } from './input'
 import { placeCamera } from './render'
 import { IDLE, createArena, start, step, type Input } from './sim'
@@ -51,16 +52,19 @@ describe('keyboard frame', () => {
     }
   })
 
-  it('puts a robot face on +z, the side that camera is looking from', () => {
-    const avatar = createAvatar('visor')
-    avatar.updateWorldMatrix(true, true)
-    const face = avatar.getObjectByName('face') as THREE.Object3D
-    const pos = new THREE.Vector3()
-    face.getWorldPosition(pos)
-    expect(pos.z).toBeCloseTo(FACE_LOCAL_Z)
-    const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(face.getWorldQuaternion(new THREE.Quaternion()))
-    expect(normal.z).toBeGreaterThan(0.9)
+  it('paints a robot face on the shell, on the +z side the camera sees', () => {
+    const map = new THREE.Texture()
+    const avatar = createAvatar('visor', map)
+    const shell = avatar.getObjectByName('shell') as THREE.Mesh
+    const mat = shell.material as THREE.MeshStandardMaterial
+    expect(mat.map).toBe(map)
+    expect(avatar.getObjectByName('face')).toBeUndefined()
     expect(createAvatar('football').getObjectByName('face')).toBeUndefined()
+    expect(createAvatar('scout', map).getObjectByName('antenna')).toBeTruthy()
+    const [dx, dy, dz] = sphereDir(127, 127, 512, 256)
+    expect(dz).toBeGreaterThan(0.98)
+    expect(Math.abs(dx)).toBeLessThan(0.05)
+    expect(Math.abs(dy)).toBeLessThan(0.05)
   })
 
   it('moves the ball along that same right axis, and W jumps instead of walking', () => {

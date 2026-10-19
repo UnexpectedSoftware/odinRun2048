@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { createAvatar, disposeAvatar, tintAvatar } from './avatar'
 import { styleFor } from './palette'
-import { isSkinId, paintFace, paintFootball, skinById, type SkinId } from './skins'
+import { isSkinId, paintCharacter, paintFootball, skinById, type SkinId } from './skins'
 import type { Body, Floor, Remote, Sim } from './sim'
 
 /**
@@ -373,15 +373,10 @@ export class View {
     let texture = this.textures.get(id)
     if (texture) return texture
     const canvas = document.createElement('canvas')
-    if (id === 'football') {
-      canvas.width = 512
-      canvas.height = 256
-      paintFootball(canvas)
-    } else {
-      canvas.width = 256
-      canvas.height = 256
-      paintFace(canvas, id)
-    }
+    canvas.width = 512
+    canvas.height = 256
+    if (id === 'football') paintFootball(canvas)
+    else paintCharacter(canvas, id)
     texture = new THREE.CanvasTexture(canvas)
     texture.colorSpace = THREE.SRGBColorSpace
     texture.anisotropy = 4
