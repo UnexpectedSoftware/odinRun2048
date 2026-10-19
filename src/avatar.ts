@@ -2,14 +2,10 @@ import * as THREE from 'three'
 import { skinById, type SkinId } from './skins'
 
 /**
- * Follow camera sits on +z and looks toward −z, so the face the player sees
- * is the ball's +z side. CircleGeometry's normal is already +z.
- * frame.test.ts checks this placement.
+ * Follow camera sits on +z and looks toward −z, so skin art is painted
+ * onto that side of the shell. frame.test.ts checks the texel direction.
  */
-export const FACE_LOCAL_Z = 0.96
-
 const sphere = new THREE.SphereGeometry(1, 28, 18)
-const circle = new THREE.CircleGeometry(1, 28)
 const poleGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.34, 8)
 const tipGeo = new THREE.SphereGeometry(0.065, 10, 8)
 
@@ -19,30 +15,17 @@ export function createAvatar(skin: SkinId, map?: THREE.Texture): THREE.Group {
   group.name = skin
 
   const shellMat = new THREE.MeshStandardMaterial({
-    color: spec.shell,
-    emissive: spec.rolls ? '#000000' : spec.shell,
-    emissiveIntensity: spec.rolls ? 0 : 0.18,
-    roughness: spec.rolls ? 0.55 : 0.38,
-    metalness: spec.rolls ? 0.04 : 0.34,
-    map: spec.rolls ? (map ?? null) : null,
+    // A face texture already holds its colors. White leaves them alone.
+    // Football's near-white shell multiplies the black patches.
+    color: map && !spec.rolls ? '#ffffff' : spec.shell,
+    emissive: '#000000',
+    roughness: spec.rolls ? 0.55 : 0.62,
+    metalness: 0.04,
+    map: map ?? null,
   })
   const shell = new THREE.Mesh(sphere, shellMat)
   shell.name = 'shell'
   group.add(shell)
-
-  if (!spec.rolls) {
-    const faceMat = new THREE.MeshStandardMaterial({
-      color: '#ffffff',
-      roughness: 0.6,
-      metalness: 0.04,
-      map: map ?? null,
-    })
-    const face = new THREE.Mesh(circle, faceMat)
-    face.name = 'face'
-    face.position.set(0, 0.02, FACE_LOCAL_Z)
-    face.scale.setScalar(0.92)
-    group.add(face)
-  }
 
   if (skin === 'scout') group.add(antenna())
   return group
@@ -52,9 +35,14 @@ export function tintAvatar(group: THREE.Group, skin: SkinId, hurt: boolean) {
   const shell = group.getObjectByName('shell') as THREE.Mesh | undefined
   if (!shell) return
   const mat = shell.material as THREE.MeshStandardMaterial
-  const color = hurt ? '#ff8aa0' : skinById(skin).shell
+  const spec = skinById(skin)
+  if (mat.map) {
+    mat.color.set(hurt ? '#ff8aa0' : spec.rolls ? spec.shell : '#ffffff')
+    return
+  }
+  const color = hurt ? '#ff8aa0' : spec.shell
   mat.color.set(color)
-  if (!mat.map) mat.emissive.set(color)
+  mat.emissive.set(color)
 }
 
 export function disposeAvatar(group: THREE.Group) {

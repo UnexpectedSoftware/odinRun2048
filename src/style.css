@@ -210,14 +210,17 @@ html, body, #app {
 
 .skins {
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
   gap: 10px;
-  margin: 8px 0 2px;
+  width: min(100%, 302px);
+  margin: 8px auto 2px;
 }
 
 .card .skins button {
-  width: 68px;
-  height: 68px;
+  width: calc((100% - 30px) / 4);
+  height: auto;
+  aspect-ratio: 1;
   margin: 0;
   padding: 0;
   border-radius: 50%;
