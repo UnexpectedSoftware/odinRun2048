@@ -13,6 +13,8 @@ import { shove } from './crowd'
  * road stay on the same z. Integrating each display's frame clock does not:
  * a late start or a dropped frame leaves one ball behind, and because speed
  * grows with distance that gap keeps opening until the balls never meet.
+ * In a room the cruise is the whole depth: bumps and blocks move a ball
+ * sideways, never ahead of the other racers.
  */
 
 export const GRAVITY = 24
@@ -152,6 +154,8 @@ export interface Sim {
   held: Set<number>
   /** Locks that arrived before this client generated the ball. */
   pendingLocks: Map<number, number>
+  /** Network id of this client. Ties in a sideways bump use it so both browsers agree. */
+  playerId: string
 }
 
 export function radiusFor(value: number): number {
@@ -184,10 +188,9 @@ export function cruiseSpeed(time: number): number {
 }
 
 /**
- * Where a friend sits on our road.
- * `friendWorldZ` was measured on their clock. Subtract their cruise and add
- * ours, so a late packet or a late start does not park them on another z.
- * A block or a shove remains as the difference from their cruise.
+ * Map a friend's world z onto our clock.
+ * Live racers do not use the offset: they sit on `cruiseZ` of one shared
+ * clock. A fallen friend keeps it, so the body stays where it left the road.
  */
 export function roadZ(localTime: number, friendTime: number, friendWorldZ: number): number {
   return cruiseZ(localTime) + (friendWorldZ - cruiseZ(friendTime))
@@ -200,9 +203,23 @@ export interface FriendPlace {
 }
 
 /**
+ * One depth for every living ball on this client.
+ * Racers use the local clock. A spectator uses the lead friend's clock, so a
+ * room that is a few seconds apart still draws one line of balls.
+ */
+export function liveLineZ(localTime: number, friendTimes: readonly number[], racing: boolean): number {
+  if (racing) return cruiseZ(localTime)
+  let lead = localTime
+  for (const time of friendTimes) if (time > lead) lead = time
+  return cruiseZ(lead)
+}
+
+/**
  * Draw and shove a friend on our road while we are racing.
- * A fallen friend keeps the z of the first time we saw them down, so the
- * body does not ride forward with us. Spectating uses the z they sent.
+ * A live friend is pulled onto our cruise depth, even when their packet is
+ * ahead or behind. A fallen friend keeps the z of the first time we saw them
+ * down. Outside a race, the sent z is returned and the match lines living
+ * friends up with `liveLineZ`.
  */
 export function presentFriend(
   localTime: number,
@@ -215,7 +232,7 @@ export function presentFriend(
     const z = heldZ ?? roadZ(localTime, friend.time, friend.z)
     return { z, heldZ: z }
   }
-  return { z: roadZ(localTime, friend.time, friend.z), heldZ: undefined }
+  return { z: cruiseZ(localTime), heldZ: undefined }
 }
 
 /**
@@ -228,7 +245,7 @@ export function catchRaceClock(sim: Sim, hostTime: number, dt: number) {
   if (error <= 0.02) return
   const rate = error > 0.75 ? 0.45 : 0.2
   const correction = Math.min(rate * dt, error)
-  const slip = sim.player.z - cruiseZ(sim.time)
+  const slip = sim.authority === 'solo' ? sim.player.z - cruiseZ(sim.time) : 0
   sim.time += correction
   sim.player.z = cruiseZ(sim.time) + slip
   sim.distance = Math.max(sim.distance, Math.max(0, -sim.player.z))
@@ -279,6 +296,7 @@ function base(seed: number, procedural: boolean, bestValue = 0, bestDistance = 0
     removed: new Set(),
     held: new Set(),
     pendingLocks: new Map(),
+    playerId: '',
   }
 }
 
@@ -325,11 +343,14 @@ export function step(sim: Sim, input: Input, dt: number) {
     first = false
     left -= slice
   }
+  if (sim.status === 'running') shoveRemotes(sim)
 }
 
 function stepOnce(sim: Sim, input: Input, dt: number, jumpEdge: boolean) {
   const p = sim.player
-  const slip = p.z - cruiseZ(sim.time)
+  // Multiplayer depth is the cruise itself. A block or a bump must not leave
+  // a slip that puts this ball ahead of the others.
+  const slip = sim.authority === 'solo' ? p.z - cruiseZ(sim.time) : 0
   sim.time += dt
   if (sim.invuln > 0) sim.invuln -= dt
   if (sim.pop > 0) sim.pop = Math.max(0, sim.pop - dt * 2.5)
@@ -361,7 +382,7 @@ function stepOnce(sim: Sim, input: Input, dt: number, jumpEdge: boolean) {
   const wasSupported = p.grounded
   snapFloor(sim)
   resolveSolids(sim)
-  shoveRemotes(sim)
+  if (sim.authority !== 'solo') p.z = cruiseZ(sim.time)
   if (p.grounded) sim.coyote = COYOTE
   else if (wasSupported) sim.coyote = COYOTE
   else sim.coyote = Math.max(0, sim.coyote - dt)
@@ -429,18 +450,19 @@ function floorAt(sim: Sim, x: number, z: number): Floor | null {
 
 function resolveSolids(sim: Sim) {
   const p = sim.player
+  const lockForward = sim.authority !== 'solo'
   for (let pass = 0; pass < 4; pass++) {
     let hit = false
     for (const body of sim.bodies) {
       if (body.kind !== 'block' || !body.alive) continue
-      if (pushOut(p, body)) hit = true
+      if (pushOut(p, body, lockForward)) hit = true
     }
     if (!hit) return
   }
 }
 
 /** Smallest-axis separation of the player sphere treated as an expanded box. */
-function pushOut(p: Player, b: Body): boolean {
+function pushOut(p: Player, b: Body, lockForward: boolean): boolean {
   const dx = p.x - b.x
   const dy = p.y - b.y
   const dz = p.z - b.z
@@ -448,9 +470,10 @@ function pushOut(p: Player, b: Body): boolean {
   const py = b.hy + p.radius - Math.abs(dy)
   const pz = b.hz + p.radius - Math.abs(dz)
   if (px <= 0 || py <= 0 || pz <= 0) return false
-  if (px < py && px < pz) {
+  const alongX = () => {
     p.x += Math.sign(dx || 1) * px
-  } else if (py < pz) {
+  }
+  const alongY = () => {
     p.y += Math.sign(dy || 1) * py
     if (dy >= 0) {
       if (p.vy < 0) p.vy = 0
@@ -458,9 +481,16 @@ function pushOut(p: Player, b: Body): boolean {
     } else if (p.vy > 0) {
       p.vy = 0
     }
-  } else {
-    p.z += Math.sign(dz || 1) * pz
   }
+  if (lockForward) {
+    // Shared depth. Land on a block, otherwise slide off it sideways.
+    if (dy > 0 && py <= px) alongY()
+    else alongX()
+    return true
+  }
+  if (px < py && px < pz) alongX()
+  else if (py < pz) alongY()
+  else p.z += Math.sign(dz || 1) * pz
   return true
 }
 
@@ -556,14 +586,45 @@ function trailZ(sim: Sim): number {
 }
 
 function shoveRemotes(sim: Sim) {
-  if (sim.remotes.length === 0) return
   const player = sim.player
+  const lockForward = sim.authority !== 'solo'
+  if (lockForward) player.z = cruiseZ(sim.time)
+  if (sim.remotes.length === 0) return
+
+  const selfPose = {
+    x: player.x,
+    y: player.y,
+    z: player.z,
+    radius: player.radius,
+  }
+  let ox = 0
+  let oy = 0
+  const moved: Array<{ remote: Remote; x: number; y: number }> = []
   for (const remote of sim.remotes) {
     if (!remote.alive) continue
-    const delta = shove(player, remote)
-    player.x += delta.x
-    player.y += delta.y
-    player.z += delta.z
+    const posed = {
+      x: remote.x,
+      y: remote.y,
+      z: lockForward ? player.z : remote.z,
+      radius: remote.radius,
+    }
+    const bias = remote.id > sim.playerId ? 1 : -1
+    const onSelf = shove(selfPose, posed, bias)
+    const onThem = shove(posed, selfPose, -bias)
+    ox += onSelf.x
+    oy += onSelf.y
+    moved.push({ remote, x: onThem.x, y: onThem.y })
+  }
+  player.x += ox
+  player.y += oy
+  for (const move of moved) {
+    move.remote.x += move.x
+    move.remote.y += move.y
+  }
+  if (lockForward) {
+    const z = cruiseZ(sim.time)
+    player.z = z
+    for (const remote of sim.remotes) if (remote.alive) remote.z = z
   }
 }
 

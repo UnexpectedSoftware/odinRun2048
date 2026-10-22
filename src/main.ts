@@ -21,6 +21,7 @@ import {
   catchRaceClock,
   catchUp,
   createSim,
+  liveLineZ,
   presentFriend,
   removeBall,
   restart,
@@ -299,6 +300,7 @@ function beginCountdown(seed: number) {
 function launchMatch() {
   sim = createSim(pendingSeed, saved.value, saved.distance)
   sim.authority = hosting ? 'host' : 'guest'
+  sim.playerId = net?.id ?? ''
   start(sim)
   view.clear()
   view.setSkin(skin)
@@ -483,10 +485,17 @@ function applyRemotePoses(now: number) {
     return
   }
   const racing = sim.status === 'running'
-  const remotes = []
+  const sampled: Array<{ id: string; pose: NetPose }> = []
+  const liveTimes: number[] = []
   for (const [id, samples] of remoteSamples) {
     const pose = samplePoses(samples, now)
     if (!pose) continue
+    sampled.push({ id, pose })
+    if (pose.alive) liveTimes.push(pose.time)
+  }
+  const line = liveLineZ(sim.time, liveTimes, racing)
+  const remotes = []
+  for (const { id, pose } of sampled) {
     const placed = presentFriend(sim.time, racing, pose, heldFriendZ.get(id))
     if (placed.heldZ === undefined) heldFriendZ.delete(id)
     else heldFriendZ.set(id, placed.heldZ)
@@ -494,7 +503,7 @@ function applyRemotePoses(now: number) {
       id,
       x: pose.x,
       y: pose.y,
-      z: placed.z,
+      z: pose.alive ? line : placed.z,
       vy: pose.vy,
       value: pose.value,
       radius: pose.radius,
