@@ -1,10 +1,13 @@
 /**
  * Player-versus-player shove.
  *
- * Each client moves only its own ball. Mass is the volume, radius³, so a
- * larger ball keeps its line and a smaller one takes the hit.
- * The two shares of a pure separation add up to the overlap, and the extra
- * lateral kick makes a heavy neighbor shove you off the racing line.
+ * Depth (z) is shared by every racer, so a bump never pushes someone ahead
+ * or behind. Separation is sideways, or straight up when one ball lands on
+ * another. Mass is the volume, radius³, and radius grows with the tier, so
+ * a higher number keeps its line and the smaller ball takes the hit.
+ * The two shares of a separation add up to the overlap. An extra lateral
+ * kick lets a heavy neighbor shove you off the racing line. `bias` picks a
+ * side only when the centers are stacked on the same x (±1).
  */
 
 export interface BallPose {
@@ -21,47 +24,42 @@ export interface Shove {
 }
 
 const ZERO: Shove = { x: 0, y: 0, z: 0 }
-const STEP_CAP = 0.28
+const MASS_RATIO_CAP = 1.6
+const KICK_GAIN = 0.45
+const KICK_CAP = 0.08
 
 export function ballMass(radius: number): number {
   return radius * radius * radius
 }
 
-export function shove(self: BallPose, other: BallPose): Shove {
+export function shove(self: BallPose, other: BallPose, bias = 1): Shove {
   const dx = self.x - other.x
   const dy = self.y - other.y
-  const dz = self.z - other.z
-  const dist = Math.hypot(dx, dy, dz)
   const reach = self.radius + other.radius
-  if (dist >= reach || dist < 1e-8) return ZERO
+  // Farther apart down the lane than the two radii: not the same depth slice.
+  // Callers racing together snap z first, so a stale packet still collides.
+  if (reach <= 0 || Math.abs(self.z - other.z) >= reach) return ZERO
+  const dist = Math.hypot(dx, dy)
+  if (dist >= reach) return ZERO
 
-  const pen = reach - dist
-  const nx = dx / dist
-  const ny = dy / dist
-  const nz = dz / dist
-  const share = ballMass(other.radius) / (ballMass(self.radius) + ballMass(other.radius))
+  const selfMass = ballMass(self.radius)
+  const otherMass = ballMass(other.radius)
+  const share = otherMass / (selfMass + otherMass)
+  const side = Math.abs(dx) > 1e-6 ? Math.sign(dx) : (bias >= 0 ? 1 : -1)
+  const mostlyVertical = Math.abs(dy) > Math.abs(dx)
 
-  let ox = nx * pen * share
-  let oy = ny * pen * share
-  let oz = nz * pen * share
-
-  const lateral = Math.hypot(dx, dz)
-  if (lateral > 1e-4) {
-    const ratio = Math.min(1.6, ballMass(other.radius) / ballMass(self.radius))
-    const kick = pen * (Math.abs(dx) / lateral) * ratio * 1.25
-    ox += (dx / lateral) * kick
-    oz += (dz / lateral) * kick * 0.35
+  if (mostlyVertical) {
+    const span = Math.sqrt(Math.max(0, reach * reach - dx * dx))
+    const pen = span - Math.abs(dy)
+    if (pen <= 0) return ZERO
+    const up = Math.abs(dy) > 1e-6 ? Math.sign(dy) : 1
+    return { x: 0, y: up * pen * share, z: 0 }
   }
 
-  const mostlyVertical = Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > Math.abs(dz)
-  if (!mostlyVertical) oy = 0
-
-  const mag = Math.hypot(ox, oy, oz)
-  if (mag > STEP_CAP) {
-    const scale = STEP_CAP / mag
-    ox *= scale
-    oy *= scale
-    oz *= scale
-  }
-  return { x: ox, y: oy, z: oz }
+  const span = Math.sqrt(Math.max(0, reach * reach - dy * dy))
+  const pen = span - Math.abs(dx)
+  if (pen <= 0) return ZERO
+  const ratio = Math.min(MASS_RATIO_CAP, otherMass / Math.max(selfMass, 1e-8))
+  const kick = Math.min(KICK_CAP, pen * ratio * KICK_GAIN)
+  return { x: side * (pen * share + kick), y: 0, z: 0 }
 }

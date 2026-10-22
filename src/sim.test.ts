@@ -10,6 +10,7 @@ import {
   cruiseZ,
   extend,
   gapLengths,
+  liveLineZ,
   presentFriend,
   radiusFor,
   roadZ,
@@ -85,7 +86,13 @@ describe('shared pace', () => {
     const live = presentFriend(2, true, { time: 6, z: cruiseZ(6), alive: true }, 4)
     expect(live.z).toBeCloseTo(cruiseZ(2), 4)
     expect(live.heldZ).toBeUndefined()
+    const ahead = presentFriend(4, true, { time: 4, z: cruiseZ(4) - 6, alive: true }, undefined)
+    expect(ahead.z).toBeCloseTo(cruiseZ(4), 4)
+    expect(ahead.heldZ).toBeUndefined()
     expect(presentFriend(8, false, { time: 9, z: -40, alive: true }, undefined).z).toBe(-40)
+    expect(liveLineZ(3, [8, 5], true)).toBeCloseTo(cruiseZ(3), 4)
+    expect(liveLineZ(3, [8, 5], false)).toBeCloseTo(cruiseZ(8), 4)
+    expect(liveLineZ(3, [], false)).toBeCloseTo(cruiseZ(3), 4)
   })
 
   it('catches a late guest up toward the host clock and does not rewind', () => {
@@ -314,6 +321,70 @@ describe('friends', () => {
     sim.remotes = [friend({ x: 0.55, y: sim.player.radius, radius: 1.1, value: 64 })]
     step(sim, IDLE, 1 / 60)
     expect(sim.player.x).toBeLessThan(-0.15)
+  })
+
+  it('keeps two racers level and shoves the smaller ball farther', () => {
+    const host = createArena()
+    const guest = createArena()
+    host.authority = 'host'
+    guest.authority = 'guest'
+    host.playerId = 'aaa'
+    guest.playerId = 'bbb'
+    start(host)
+    start(guest)
+    host.player.x = -0.15
+    guest.player.x = 0.2
+    guest.player.value = 64
+    guest.player.radius = radiusFor(64)
+    guest.player.y = guest.player.radius
+    const hostX0 = host.player.x
+    const guestX0 = guest.player.x
+
+    const mirror = (self: Sim, other: Sim, id: string) => {
+      self.remotes = [
+        friend({
+          id,
+          x: other.player.x,
+          y: other.player.y,
+          z: other.player.z - 5,
+          value: other.player.value,
+          radius: other.player.radius,
+        }),
+      ]
+    }
+
+    for (let i = 0; i < 8; i++) {
+      mirror(host, guest, guest.playerId)
+      mirror(guest, host, host.playerId)
+      step(host, IDLE, 1 / 60)
+      step(guest, IDLE, 1 / 60)
+      expect(host.player.z).toBeCloseTo(cruiseZ(host.time), 4)
+      expect(guest.player.z).toBeCloseTo(cruiseZ(guest.time), 4)
+      expect(host.player.z).toBeCloseTo(guest.player.z, 4)
+      expect(host.remotes[0].z).toBeCloseTo(host.player.z, 4)
+      expect(guest.remotes[0].z).toBeCloseTo(guest.player.z, 4)
+    }
+
+    const hostShift = Math.abs(host.player.x - hostX0)
+    const guestShift = Math.abs(guest.player.x - guestX0)
+    expect(hostShift).toBeGreaterThan(guestShift * 2)
+    const gap = Math.abs(host.player.x - guest.player.x)
+    expect(gap).toBeGreaterThanOrEqual(host.player.radius + guest.player.radius - 1e-3)
+    const hostView = Math.abs(host.player.x - host.remotes[0].x)
+    const guestView = Math.abs(guest.player.x - guest.remotes[0].x)
+    expect(hostView).toBeGreaterThanOrEqual(host.player.radius + host.remotes[0].radius - 1e-3)
+    expect(guestView).toBeGreaterThanOrEqual(guest.player.radius + guest.remotes[0].radius - 1e-3)
+  })
+
+  it('slides a multiplayer ball off a block without falling behind', () => {
+    const sim = createArena()
+    sim.authority = 'host'
+    spawnBlock(sim, 0, -8)
+    start(sim)
+    run(sim, IDLE, 1.5)
+    expect(sim.status).toBe('running')
+    expect(sim.player.z).toBeCloseTo(cruiseZ(sim.time), 4)
+    expect(Math.abs(sim.player.x)).toBeGreaterThan(0.4)
   })
 
   it('locks a pending ball to the closer friend on the host', () => {

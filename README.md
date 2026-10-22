@@ -27,7 +27,7 @@ The soundtrack is [Write Protect On C64](https://pixabay.com/music/electronic-wr
 
 ## Multiplayer
 
-One player opens Multiplayer and creates a room. The five-character code is the room. A friend joins with that code, on the same site, and the host starts the run. Up to four people share the road. Everyone rolls on the same pace, so the balls meet even when a start message arrives late. A bigger ball shoves a smaller one harder. If you fall, your friends keep going. Spectate follows them, and the host can start the room again.
+One player opens Multiplayer and creates a room. The five-character code is the room. A friend joins with that code, on the same site, and the host starts the run. Up to four people share the road. Everyone rolls on the same pace and the same depth, so the balls stay side by side even when a start message arrives late. A bump pushes them apart left and right; a bigger ball shoves a smaller one harder. If you fall, your friends keep going. Spectate follows them, and the host can start the room again.
 
 Rooms are matched through public Nostr relays, then the browsers talk directly. Solo play does not use the network. If a room will not connect, check that both browsers are online and try a new code.
 
@@ -48,7 +48,7 @@ The production build uses relative asset paths so it can live at `/odinRun2048/`
 
 ## Deploy
 
-The live page is a folder in [unexpectedsoftware.github.io](https://github.com/UnexpectedSoftware/unexpectedsoftware.github.io), which is the site GitHub Pages already serves at `unexpectedsoftware.com`. This repo does not enable its own Pages site, so the two do not fight over that path.
+The live page is a folder in [unexpectedsoftware.github.io](https://github.com/UnexpectedSoftware/unexpectedsoftware.github.io), which is the site GitHub Pages already serves at `unexpectedsoftware.com` from the `master` branch. This repo does not enable its own Pages site and has no workflow that copies a build across, so merging here does not update the live page. The two sites do not fight over that path.
 
 ```bash
 npm run build
